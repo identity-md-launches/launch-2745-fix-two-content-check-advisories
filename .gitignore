@@ -5,3 +5,5 @@ out
 .env*.local
 next-env.d.ts
 *.tsbuildinfo
+
+imd/brief.final.json

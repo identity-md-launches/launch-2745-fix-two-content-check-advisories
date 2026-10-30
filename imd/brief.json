@@ -1,0 +1,11 @@
+{
+  "objective": "Host PolyHamster as a static site on IPFS under the label polyhamster. The repository is a Next.js 15 app with output: 'export'. Build with `npm ci && npm run build`; the static export is the `out/` folder. Do not change any code or content: host it as it is. PolyHamster is a play-points prediction market (no real money, no token) on Squeektoshi, the hamster mining Squeekchain. At runtime the browser reads the public API https://api.squeekchain.com and calls RPC functions on a Supabase project; its URL and publishable key in lib/config.ts are public on purpose.",
+  "shape": "chain",
+  "steps": [
+    { "skill": "import-site", "key": "build" },
+    { "skill": "site-content-check", "key": "check" }
+  ],
+  "repoUrl": "REPLACED_BY_CHECK_SCRIPT",
+  "baseCommit": "REPLACED_BY_CHECK_SCRIPT",
+  "ipfs": "polyhamster"
+}
