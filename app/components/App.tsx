@@ -4,12 +4,13 @@ import { DotText } from "./DotText";
 import { Lang, t, errText } from "./i18n";
 import { MARKET_DEFS, MarketKind } from "@/lib/squeek";
 import { api, liveFromSqueek } from "@/lib/api";
+import { displayStatus, pickReading, Reading, WheelStatus } from "./wheelStatus";
 
 type Pool = { total: number; seeded: number; bets: number };
 type Market = { id: string; kind: MarketKind; status: string; lockAt: number; resultIdx: number | null; resultValue: string | null; pools: Pool[] };
 type Night = { night: string; nightStart: number; lockAt: number; markets: Market[] };
-type Status = { ok: boolean; spinning: boolean; freshness: string; rpm: number; kmh: number; blockHeight: number; blockProgress: number; observedAt?: string | null };
-type State = { now: number; status: Status; nights: Night[]; leaderboard: { pseudo: string; balance: number }[] };
+type Status = WheelStatus;
+type State = { now: number; status: Status | null; nights: Night[]; leaderboard: { pseudo: string; balance: number }[] };
 type Player = { id: string; pseudo: string; balance: number; last_claim: string | null };
 type Entry = { marketId: string; kind: "bet" | "seed"; outcome: number; amount: number; payout: number | null; refunded: boolean; night: string; marketKind: MarketKind; status: string };
 
@@ -29,6 +30,8 @@ export default function App() {
   const [tab, setTab] = useState(1);
   const [now, setNow] = useState(Date.now());
   const [toast, setToast] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
+  const [live, setLive] = useState<Reading | null>(null); // last fresh wheel reading
+  const [stateFailed, setStateFailed] = useState(false);
 
   useEffect(() => {
     const l = store.get(LANG_KEY);
@@ -36,12 +39,13 @@ export default function App() {
     setToken(store.get(TOKEN_KEY));
   }, []);
 
+  // Game state (Supabase) and wheel status (Squeekchain) are loaded independently: one failing never freezes the other.
   const loadState = useCallback(async () => {
-    try {
-      const [s, live] = await Promise.all([api.state<State>(), liveFromSqueek()]);
-      if (live) s.status = live; // real time when the browser can reach Squeekchain, else the 1-min copy in the DB
-      setState(s);
-    } catch { /* keep last state */ }
+    const [s, l] = await Promise.allSettled([api.state<State>(), liveFromSqueek()]);
+    if (s.status === "fulfilled") { setState(s.value); setStateFailed(false); } else setStateFailed(true);
+    // Squeekchain first; else the keeper's 1-min copy, dated by its own updatedAt. Nothing fresh: keep the old reading, it ages out.
+    const reading = pickReading(l.status === "fulfilled" ? l.value : null, s.status === "fulfilled" ? s.value : null, Date.now());
+    if (reading) setLive(reading);
   }, []);
   const loadMe = useCallback(() => {
     if (!token) return setMe(null);
@@ -53,10 +57,11 @@ export default function App() {
   useEffect(() => { loadState(); const i = setInterval(loadState, 20_000); return () => clearInterval(i); }, [loadState]);
   useEffect(() => { loadMe(); const i = setInterval(loadMe, 30_000); return () => clearInterval(i); }, [loadMe]);
   useEffect(() => { const i = setInterval(() => setNow(Date.now()), 1000); return () => clearInterval(i); }, []);
-  useEffect(() => { if (!toast) return; const i = setTimeout(() => setToast(null), 3500); return () => clearTimeout(i); }, [toast]);
+  useEffect(() => { if (!toast || toast.kind === "err") return; const i = setTimeout(() => setToast(null), 3500); return () => clearTimeout(i); }, [toast]);
 
   const say = (text: string, kind: "ok" | "err" = "ok") => setToast({ text, kind });
   const switchLang = (l: Lang) => { setLang(l); store.set(LANG_KEY, l); };
+  useEffect(() => { document.documentElement.lang = lang; }, [lang]);
 
   const act = async (run: (token: string) => Promise<unknown>, okText: string) => {
     if (!token) { document.getElementById("join")?.scrollIntoView({ behavior: "smooth" }); return false; }
@@ -68,40 +73,43 @@ export default function App() {
     } catch (e) { say(errText(lang, (e as Error).message), "err"); return false; }
   };
 
-  const status = state?.status;
+  // A status older than 90 s, or not "online" at the source, is shown as unavailable, never as live.
+  const status = displayStatus(live, state?.status, now);
+  const loading = !state && !live && !stateFailed;
   const tonight = state?.nights[1];
 
   return (
     <div className="page">
       <header className="top">
-        <div className="brand">
+        <h1 className="brand">
           <Wheel spinning={!!status?.spinning} />
           <DotText text="POLYHAMSTER" size={5} className="logo" />
-        </div>
-        <div className="lang">
-          <button className={lang === "fr" ? "on" : ""} onClick={() => switchLang("fr")}>FR</button>
-          <button className={lang === "en" ? "on" : ""} onClick={() => switchLang("en")}>EN</button>
+        </h1>
+        <div className="lang" role="group" aria-label={t(lang, "language")}>
+          <button className={lang === "fr" ? "on" : ""} aria-pressed={lang === "fr"} lang="fr" onClick={() => switchLang("fr")}>FR</button>
+          <button className={lang === "en" ? "on" : ""} aria-pressed={lang === "en"} lang="en" onClick={() => switchLang("en")}>EN</button>
         </div>
       </header>
       <p className="tagline">{t(lang, "tagline")} <span className="muted">{t(lang, "points")}</span></p>
+      {stateFailed && <p className="warn">{t(lang, "stale")}</p>}
 
       <section className={`board ${status?.spinning ? "is-spinning" : "is-idle"}`}>
         <div className="board-main">
-          <div className="board-label"><span className={`led ${status?.ok ? (status.spinning ? "led-on" : "led-idle") : "led-off"}`} />{t(lang, "live")}</div>
+          <div className="board-label"><span className={`led ${status?.ok ? (status.spinning ? "led-on" : "led-idle") : "led-off"}`} />{loading ? "…" : status?.ok ? t(lang, "live") : t(lang, "notLive")}</div>
           {status?.spinning
             ? <DotText text={`${status.rpm} RPM`} size={9} color="var(--gold)" className="big" />
-            : <DotText text={status ? t(lang, "sleeping") : "..."} size={9} color="var(--blue)" className="big" />}
-          <p className="board-sub">{!status ? "…" : !status.ok ? t(lang, "offline") : status.spinning ? t(lang, "spinningTxt") : t(lang, "sleepingTxt")}</p>
+            : <DotText text={!status ? "..." : status.ok ? t(lang, "sleeping") : "---"} size={9} color={status?.ok ? "var(--blue)" : "var(--muted)"} className="big" />}
+          <p className="board-sub" aria-live="polite">{loading ? "…" : !status?.ok ? t(lang, "offline") : status.spinning ? t(lang, "spinningTxt") : t(lang, "sleepingTxt")}</p>
         </div>
         <div className="board-stats">
-          <Stat label={`${t(lang, "block")} · ${Math.round((status?.blockProgress ?? 0) * 100)}%`} value={status ? `#${fmt(status.blockHeight + 1, lang)}` : "—"}>
+          <Stat label={`${t(lang, "block")} · ${Math.round((status?.blockProgress ?? 0) * 100)}%`} value={status?.blockHeight != null ? `#${fmt(status.blockHeight + 1, lang)}` : "—"}>
             <div className="progress"><i style={{ width: `${Math.round((status?.blockProgress ?? 0) * 100)}%` }} /></div>
           </Stat>
-          <Stat label="km/h" value={status ? status.kmh.toFixed(1) : "—"} />
+          <Stat label="km/h" value={status?.ok ? status.kmh.toFixed(1) : "—"} />
           {tonight && (
             <Stat
               label={now < tonight.lockAt && !status?.spinning ? t(lang, "closesIn") : t(lang, "tonight")}
-              value={now < tonight.lockAt && !status?.spinning ? countdown(tonight.lockAt - now) : "🔒"}
+              value={now < tonight.lockAt && !status?.spinning ? countdown(tonight.lockAt - now) : t(lang, "closedShort")}
               accent
             />
           )}
@@ -110,9 +118,9 @@ export default function App() {
 
       <div className="layout">
         <main>
-          <nav className="tabs">
+          <nav className="tabs" aria-label={t(lang, "nights")}>
             {state?.nights.map((n, i) => (
-              <button key={n.night} className={tab === i ? "on" : ""} onClick={() => setTab(i)}>
+              <button key={n.night} className={tab === i ? "on" : ""} aria-pressed={tab === i} onClick={() => setTab(i)}>
                 {[t(lang, "lastNight"), t(lang, "tonight"), t(lang, "tomorrow")][i]}
                 <small>{nightLabel(n.night, lang)}</small>
               </button>
@@ -160,7 +168,14 @@ export default function App() {
         </aside>
       </div>
 
-      {toast && <div className={`toast ${toast.kind}`}>{toast.text}</div>}
+      <div className="toast-region" role="status" aria-live="polite">
+        {toast && (
+          <div className={`toast ${toast.kind}`}>
+            {toast.text}
+            {toast.kind === "err" && <button className="toast-close" onClick={() => setToast(null)}>{t(lang, "dismiss")}</button>}
+          </div>
+        )}
+      </div>
     </div>
   );
 }
@@ -179,7 +194,7 @@ function NightView({ night, lang, now, spinning, onBet, onSeed, myEntries }: {
     <div>
       <p className="night-info">
         {open
-          ? <>{t(lang, "closesIn")} <b>{countdown(night.lockAt - now)}</b> · 20:00 UTC = {localTime(night.lockAt, lang)} {t(lang, "yourTime")}</>
+          ? <>{t(lang, "closesIn")} {countdown(night.lockAt - now)} · 20:00 UTC = {localTime(night.lockAt, lang)} {t(lang, "yourTime")}</>
           : isPast ? null : <>{t(lang, "closed")} · {t(lang, "resolvesAt")} {localTime(night.nightStart + 24.75 * 3_600_000, lang)}</>}
       </p>
       <div className="markets">
@@ -214,9 +229,9 @@ function MarketCard({ m, lang, open, night, onBet, onSeed, mine }: {
   return (
     <article className={`market ${m.status}`}>
       <header>
-        <span className="emoji">{def.emoji}</span>
+        <span className="emoji" aria-hidden="true">{def.emoji}</span>
         <h4>{def.title[lang]}</h4>
-        <button className="link" onClick={() => setShowRule((s) => !s)}>{t(lang, "rule")}</button>
+        <button className="link" aria-expanded={showRule} onClick={() => setShowRule((s) => !s)}>{t(lang, "rule")}</button>
       </header>
       {showRule && <p className="rule">{def.rule[lang]}{m.kind === "wake" && <> · 21:00 UTC = {localTime(night.nightStart + 9 * 3_600_000, lang)} {t(lang, "yourTime")}</>}</p>}
       {m.status !== "open" && (
@@ -250,7 +265,7 @@ function MarketCard({ m, lang, open, night, onBet, onSeed, mine }: {
         <div className="slip">
           <div className="chips">
             {[10, 50, 100, 250].map((v) => <button key={v} className={amount === v ? "on" : ""} onClick={() => setAmount(v)}>{v}</button>)}
-            <input type="number" min={1} max={100000} value={amount} onChange={(e) => setAmount(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
+            <input type="number" inputMode="numeric" aria-label={t(lang, "amount")} min={1} max={100000} value={amount} onChange={(e) => setAmount(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
           </div>
           <button className="primary" onClick={async () => { if (await onBet(m, pick, amount)) setPick(null); }}>
             {t(lang, "bet")} {amount} 🌻 → {t(lang, "pays")} ~{potential} 🌻
@@ -263,7 +278,7 @@ function MarketCard({ m, lang, open, night, onBet, onSeed, mine }: {
           <p className="small">{t(lang, "liquidityHelp")}</p>
           <div className="chips">
             {[100, 250, 500].map((v) => <button key={v} className={amount === v ? "on" : ""} onClick={() => setAmount(v)}>{v}</button>)}
-            <input type="number" min={def.outcomes.length} value={amount} onChange={(e) => setAmount(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
+            <input type="number" inputMode="numeric" aria-label={t(lang, "amount")} min={def.outcomes.length} value={amount} onChange={(e) => setAmount(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
           </div>
           <div className="row">
             <button className="primary blue" onClick={async () => { if (await onSeed(m, amount)) setSeeding(false); }}>{t(lang, "seed")} {amount} 🌻</button>
@@ -295,7 +310,7 @@ function JoinCard({ lang, onJoined, say }: { lang: Lang; onJoined: (token: strin
           try { const r = await api.createPlayer(pseudo); onJoined(r.token); }
           catch (err) { say(errText(lang, (err as Error).message), "err"); }
         }}>
-          <input value={pseudo} onChange={(e) => setPseudo(e.target.value)} placeholder={t(lang, "pseudo")} maxLength={20} />
+          <input value={pseudo} onChange={(e) => setPseudo(e.target.value)} aria-label={t(lang, "pseudoLabel")} placeholder={t(lang, "pseudo")} name="nickname" autoComplete="nickname" maxLength={20} />
           <button className="primary" type="submit">{t(lang, "go")}</button>
         </form>
       ) : (
@@ -304,8 +319,8 @@ function JoinCard({ lang, onJoined, say }: { lang: Lang; onJoined: (token: strin
           try { await api.me(key.trim()); onJoined(key.trim()); }
           catch (err) { say(errText(lang, (err as Error).message), "err"); }
         }}>
-          <input value={key} onChange={(e) => setKey(e.target.value)} placeholder={t(lang, "restorePh")} />
-          <button className="primary" type="submit">OK</button>
+          <input value={key} onChange={(e) => setKey(e.target.value)} aria-label={t(lang, "restorePh")} placeholder={t(lang, "restorePh")} autoComplete="off" spellCheck={false} />
+          <button className="primary" type="submit">{t(lang, "restoreGo")}</button>
         </form>
       )}
       <button className="link" onClick={() => setRestoring((r) => !r)}>{restoring ? t(lang, "join") : t(lang, "restore")}</button>
@@ -355,7 +370,7 @@ function PlayerCard({ me, lang, token, onClaim, onLogout, say }: {
 // ---------------------------------------------------------------- bits
 
 function Stat({ label, value, accent, children }: { label: string; value: string; accent?: boolean; children?: React.ReactNode }) {
-  return <div className={`stat ${accent ? "accent" : ""}`}><span>{label}</span><b>{value}</b>{children}</div>;
+  return <div className={`stat ${accent ? "accent" : ""}`}><b>{value}</b><span>{label}</span>{children}</div>;
 }
 
 function Wheel({ spinning }: { spinning: boolean }) {
