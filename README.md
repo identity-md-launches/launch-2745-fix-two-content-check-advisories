@@ -67,8 +67,10 @@ The board shows **Live / En direct** only when the wheel reading is fresh:
 
 - straight from `api.squeekchain.com/v1/status` with `measurement.freshness == "online"`, or, when the browser
   cannot reach Squeekchain, the keeper's copy in `ph_state` dated by its own `updatedAt` (a stalled keeper is not new);
-- and less than 90 s old on the page. Refreshes run every 20 s; a reading that ages out after failed refreshes turns
-  the board to **Not live / Pas en direct**, `---`, no RPM and no km/h, while the last block number stays.
+- and less than 90 s old on the page. Refreshes run every 20 s. A refresh with no usable reading immediately turns
+  the board to **Not live / Pas en direct**, `---`, no RPM, no km/h and no spinning animation, while the last block
+  values stay. This applies to failed requests and explicit stale/offline responses; a later fresh reading restores
+  Live. The 90 s limit also protects against a keeper copy that has aged out.
 - If the game state itself cannot be refreshed, a warning says the odds shown may be outdated.
 
 Logic: `app/components/wheelStatus.ts`, tested in `test/wheelStatus.test.ts`. The page language (`<html lang>`)
@@ -80,20 +82,30 @@ Run on 2026-10-30 against the final source and `dist/`:
 
 | Check | Command | Result |
 |---|---|---|
-| Typecheck | `npx tsc --noEmit` | passed, no errors |
-| Production build | `npm run build && node scripts/export-dist.mjs` | passed; `/` 74.3 kB, first load 177 kB; 6 files rewritten to relative URLs |
+| Typecheck | `npx --no-install tsc --noEmit` | passed, no errors |
+| Production build | `npm run build && node scripts/export-dist.mjs` | passed; `/` 74.5 kB, first load 177 kB; 6 files rewritten to relative URLs |
 | Unit + SQL tests | `npm test` | 17/17 passed |
 | Interactions (Playwright, export served under `/sub/`, both backends mocked) | `IMD_PLAYWRIGHT=… node test/e2e-export.mjs` | 42/42 passed |
-| Design probe at 320/390/1440 | `node .imd/reads/skills/design-critic/scripts/taste.mjs --out test/scratch/taste` | 16/16 checks passed |
+| Finding regressions (Chromium, mocked requests) | `IMD_PLAYWRIGHT=… node test/revision-export.mjs` | 35/35 passed; previous export reproduced all three findings |
+| Offline design probe at 320/390/1440 | `node .imd/reads/skills/design-critic/scripts/taste.mjs --out test/scratch/taste --offline` | 16/16 checks passed; populated slips checked separately |
 
-The interaction run covers: FR/EN switch sets `<html lang>` and persists across reload; self-hosted fonts load at a
-subpath with no failed local requests; night tabs; rule disclosure; picking an outcome opens the bet slip; betting
-without an account scrolls to Join; join, bet and confirmation toast (mocked RPCs, nothing written to the live
-project); fresh Squeekchain status, fresh keeper copy, 4-minute-old keeper copy, sensor `offline`, failed state
-refresh, and a live reading aging out after 100 s of failed refreshes (fake clock); no horizontal scroll at 320, 390
-and 1440. Limitations: no screen-reader session, no physical device, no native 200% zoom; contrast over the board's
-scanline gradient is not measured by the probe. Details and the design review: `artifacts/validation.md`.
-Design system: `DESIGN.md`.
+The build, typecheck and unit tests ran in an external temporary copy using the unchanged manifest and lockfile;
+its finished `dist/` was copied back here. No dependency or build configuration changed.
+
+Install Playwright outside the repository to rerun the browser checks, then set `IMD_PLAYWRIGHT` to its absolute
+`index.mjs` path (and `PLAYWRIGHT_BROWSERS_PATH` if using a custom browser directory). The pinned probe is available
+during the assignment; the two interaction scripts remain in `test/`.
+
+The runs cover FR/EN language and persistence, relative assets and local fonts, night tabs, rule disclosure, Join,
+mocked betting, first-poll invalidation after failed/stale/offline refreshes, recovery to Live, keeper freshness,
+and no overflow at 320/390/1440. Held bet and seed requests each produce one RPC, disable amount controls, show
+translated busy feedback, and allow keyboard retry after rejection. The expanded 320px slip fully displays `50`
+and `100000`. No live account or wager was created.
+
+Browser inspection also checked 768/900/901px layouts, keyboard focus and reduced motion. WebKit was attempted but
+could not launch because required system libraries are missing. No screen-reader session, physical device, native
+200% zoom or full accessibility audit was performed; gradient contrast remains unmeasured. Actual evidence,
+the six-domain review and limitations: `artifacts/validation.md`. Design system: `DESIGN.md`.
 
 ## Built with IMD
 

@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { DotText } from "./DotText";
 import { Lang, t, errText } from "./i18n";
 import { MARKET_DEFS, MarketKind } from "@/lib/squeek";
@@ -30,7 +30,7 @@ export default function App() {
   const [tab, setTab] = useState(1);
   const [now, setNow] = useState(Date.now());
   const [toast, setToast] = useState<{ text: string; kind: "ok" | "err" } | null>(null);
-  const [live, setLive] = useState<Reading | null>(null); // last fresh wheel reading
+  const [live, setLive] = useState<Reading | null>(null); // last wheel reading, invalidated on an unusable refresh
   const [stateFailed, setStateFailed] = useState(false);
 
   useEffect(() => {
@@ -43,9 +43,9 @@ export default function App() {
   const loadState = useCallback(async () => {
     const [s, l] = await Promise.allSettled([api.state<State>(), liveFromSqueek()]);
     if (s.status === "fulfilled") { setState(s.value); setStateFailed(false); } else setStateFailed(true);
-    // Squeekchain first; else the keeper's 1-min copy, dated by its own updatedAt. Nothing fresh: keep the old reading, it ages out.
+    // Squeekchain first; else the keeper's dated copy. Nothing usable: retain block values but invalidate live status immediately.
     const reading = pickReading(l.status === "fulfilled" ? l.value : null, s.status === "fulfilled" ? s.value : null, Date.now());
-    if (reading) setLive(reading);
+    setLive((previous) => reading ?? (previous ? { ...previous, status: { ...previous.status, ok: false, spinning: false } } : null));
   }, []);
   const loadMe = useCallback(() => {
     if (!token) return setMe(null);
@@ -216,6 +216,8 @@ function MarketCard({ m, lang, open, night, onBet, onSeed, mine }: {
   const [pick, setPick] = useState<number | null>(null);
   const [amount, setAmount] = useState(50);
   const [seeding, setSeeding] = useState(false);
+  const [pending, setPending] = useState(false);
+  const submitting = useRef(false);
   const [showRule, setShowRule] = useState(false);
   const total = m.pools.reduce((a, p) => a + p.total, 0);
   const seeded = m.pools.reduce((a, p) => a + p.seeded, 0);
@@ -225,6 +227,14 @@ function MarketCard({ m, lang, open, night, onBet, onSeed, mine }: {
   const potential = pick === null ? 0 : Math.floor((amount * (total + amount - fee(amount))) / (m.pools[pick].total + amount));
   const myStake = (i: number) => mine.filter((e) => e.kind === "bet" && e.outcome === i).reduce((a, e) => a + e.amount, 0);
   const resolved = m.status === "resolved";
+
+  const submit = async (run: () => Promise<boolean>, close: () => void) => {
+    if (submitting.current) return;
+    submitting.current = true;
+    setPending(true);
+    try { if (await run()) close(); }
+    finally { submitting.current = false; setPending(false); }
+  };
 
   return (
     <article className={`market ${m.status}`}>
@@ -249,7 +259,7 @@ function MarketCard({ m, lang, open, night, onBet, onSeed, mine }: {
             <li key={i}>
               <button
                 className={`outcome ${pick === i ? "picked" : ""} ${win ? "win" : ""} ${resolved && !win ? "lose" : ""}`}
-                disabled={!open}
+                disabled={!open || pending}
                 onClick={() => { setPick(pick === i ? null : i); setSeeding(false); }}
               >
                 <i className="bar" style={{ width: `${Math.round(share * 100)}%` }} />
@@ -264,11 +274,11 @@ function MarketCard({ m, lang, open, night, onBet, onSeed, mine }: {
       {open && pick !== null && (
         <div className="slip">
           <div className="chips">
-            {[10, 50, 100, 250].map((v) => <button key={v} className={amount === v ? "on" : ""} onClick={() => setAmount(v)}>{v}</button>)}
-            <input type="number" inputMode="numeric" aria-label={t(lang, "amount")} min={1} max={100000} value={amount} onChange={(e) => setAmount(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
+            {[10, 50, 100, 250].map((v) => <button key={v} disabled={pending} className={amount === v ? "on" : ""} onClick={() => setAmount(v)}>{v}</button>)}
+            <input type="number" inputMode="numeric" aria-label={t(lang, "amount")} disabled={pending} min={1} max={100000} value={amount} onChange={(e) => setAmount(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
           </div>
-          <button className="primary" onClick={async () => { if (await onBet(m, pick, amount)) setPick(null); }}>
-            {t(lang, "bet")} {amount} 🌻 → {t(lang, "pays")} ~{potential} 🌻
+          <button className="primary" disabled={pending} aria-busy={pending} onClick={() => submit(() => onBet(m, pick, amount), () => setPick(null))}>
+            {pending ? t(lang, "placingBet") : <>{t(lang, "bet")} {amount} 🌻 → {t(lang, "pays")} ~{potential} 🌻</>}
           </button>
         </div>
       )}
@@ -277,18 +287,18 @@ function MarketCard({ m, lang, open, night, onBet, onSeed, mine }: {
           <b>{t(lang, "liquidityTitle")}</b>
           <p className="small">{t(lang, "liquidityHelp")}</p>
           <div className="chips">
-            {[100, 250, 500].map((v) => <button key={v} className={amount === v ? "on" : ""} onClick={() => setAmount(v)}>{v}</button>)}
-            <input type="number" inputMode="numeric" aria-label={t(lang, "amount")} min={def.outcomes.length} value={amount} onChange={(e) => setAmount(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
+            {[100, 250, 500].map((v) => <button key={v} disabled={pending} className={amount === v ? "on" : ""} onClick={() => setAmount(v)}>{v}</button>)}
+            <input type="number" inputMode="numeric" aria-label={t(lang, "amount")} disabled={pending} min={def.outcomes.length} value={amount} onChange={(e) => setAmount(Math.max(1, Math.floor(Number(e.target.value) || 1)))} />
           </div>
           <div className="row">
-            <button className="primary blue" onClick={async () => { if (await onSeed(m, amount)) setSeeding(false); }}>{t(lang, "seed")} {amount} 🌻</button>
-            <button className="ghost" onClick={() => setSeeding(false)}>{t(lang, "cancel")}</button>
+            <button className="primary blue" disabled={pending} aria-busy={pending} onClick={() => submit(() => onSeed(m, amount), () => setSeeding(false))}>{pending ? t(lang, "addingLiquidity") : <>{t(lang, "seed")} {amount} 🌻</>}</button>
+            <button className="ghost" disabled={pending} onClick={() => setSeeding(false)}>{t(lang, "cancel")}</button>
           </div>
         </div>
       )}
       <footer>
         <span>{t(lang, "pool")} <b>{fmt(total, lang)} 🌻</b>{seeded > 0 && <> · {t(lang, "liquidity")} {fmt(seeded, lang)}</>}</span>
-        {open && !seeding && <button className="link" onClick={() => { setSeeding(true); setPick(null); setAmount(100); }}>{t(lang, "addLiquidity")}</button>}
+        {open && !seeding && <button className="link" disabled={pending} onClick={() => { setSeeding(true); setPick(null); setAmount(100); }}>{t(lang, "addLiquidity")}</button>}
       </footer>
     </article>
   );

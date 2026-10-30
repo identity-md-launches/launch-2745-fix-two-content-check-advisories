@@ -91,7 +91,7 @@ await scenario("squeek online", { squeek: "online" }, async (page) => {
   // Tabs
   await page.locator(".tabs button").nth(2).click();
   check("tab switch marks aria-pressed", (await page.locator(".tabs button").nth(2).getAttribute("aria-pressed")) === "true");
-  await page.locator(".tabs button").nth(1).click();
+  await page.locator(".tabs button").nth(2).click(); // next night stays open regardless of the test runner's UTC hour
   // Rule disclosure
   const rule = page.locator(".market").first().getByRole("button", { name: "Rule" });
   await rule.click();
@@ -134,7 +134,7 @@ await scenario("state refresh fails", { squeek: "fail", stateFails: true }, asyn
   check("failed refresh is not live", (await label(page)).trim() === "Pas en direct");
 });
 
-// A live reading ages out after 90 s when every later refresh fails.
+// A failed refresh invalidates a previously live reading at the first poll, before the 90 s age limit.
 {
   const browser = await chromium.launch();
   const page = await browser.newPage({ viewport: { width: 390, height: 844 }, locale: "fr-FR" });
@@ -146,10 +146,10 @@ await scenario("state refresh fails", { squeek: "fail", stateFails: true }, asyn
   await page.waitForFunction(() => document.querySelector(".board-label")?.textContent.includes("En direct"), null, { timeout: 10000 }).catch(() => {});
   check("aging: starts live and spinning", (await label(page)).includes("En direct") && (await page.locator(".board.is-spinning").count()) === 1);
   fail = true;
-  await page.clock.fastForward(60_000);
+  await page.clock.fastForward(21_000);
   await page.waitForTimeout(500);
-  check("aging: still live at 60 s", (await label(page)).includes("En direct"));
-  await page.clock.fastForward(40_000);
+  check("failed refresh: not live at the first poll (21 s)", (await label(page)).includes("Pas en direct") && (await page.locator(".board.is-spinning").count()) === 0);
+  await page.clock.fastForward(79_000);
   await page.waitForTimeout(500);
   check("aging: not live after 100 s of failed refreshes", (await label(page)).includes("Pas en direct") && (await page.locator(".board.is-spinning").count()) === 0);
   await browser.close();

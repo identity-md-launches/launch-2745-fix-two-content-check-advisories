@@ -15,7 +15,7 @@ const fresh = (s: WheelStatus | null | undefined): s is WheelStatus => !!s && s.
 
 /**
  * Picks the reading to keep after one refresh, or null when the refresh produced nothing usable
- * (the caller then keeps its previous reading, which ages out on its own).
+ * (the caller immediately invalidates the previous reading, retaining only its last block values).
  * - `squeek`: straight from api.squeekchain.com, observed now.
  * - `db`: the keeper's copy inside ph_state, dated by the server's `updatedAt` against the server's `now`,
  *   so a copy the keeper stopped refreshing is never treated as new.

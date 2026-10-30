@@ -69,6 +69,8 @@ The logo and big readout are SVG dot-matrix glyphs (`DotText`, 5x7 grid, `role="
   stat values to 20px, inputs to 16px (no iOS zoom).
 - Grids use `minmax(0, 1fr)` so long labels wrap instead of widening the page; the night tabs are a 3-column grid
   capped at 520px. Checked with no horizontal scroll at 320, 390 and 1440.
+- Amount rows (`.chips`) wrap with a 6px gap. The number field uses `flex: 1 1 90px` and `min-width: 90px`;
+  it moves below the presets when needed. At 320px the expanded bet field is 236px wide and shows six digits.
 - Spacing steps in use: 6, 8, 10, 12, 14, 16, 18, 22px; groups are separated by 14-22px, items inside by 6-10px.
 
 ## Elevation & Depth
@@ -91,7 +93,9 @@ All in `app/components/App.tsx`, styled in `app/globals.css`.
 - **Live board** (`section.board`): LED + label (`Live`/`En direct` only when the reading is fresh, else
   `Not live`/`Pas en direct`), `DotText` readout (`RPM` in gold when spinning, `ZZZ` in blue when idle, `---` muted
   when not live), a sentence (`aria-live="polite"`), and three `Stat` tiles (value then label; `accent` turns the
-  value gold-hi). Freshness rules: `app/components/wheelStatus.ts`.
+  value gold-hi). Freshness rules: `app/components/wheelStatus.ts`. After any refresh with no usable reading,
+  `App.loadState` immediately invalidates the previous status, preserving block values and stopping motion.
+  A new fresh reading restores Live; the 90-second age limit also applies.
 - **Language switch** (`.lang`): two buttons with `aria-pressed`; the active one is filled `--text`. Sets
   `<html lang>`.
 - **Night tabs** (`nav.tabs`): buttons with `aria-pressed`; active is filled gold.
@@ -99,7 +103,11 @@ All in `app/components/App.tsx`, styled in `app/globals.css`.
   verdict line, outcome rows, slips, footer with the pool. Outcome rows (`button.outcome`) show a share bar, %, and
   multiplier; states: hover/picked (gold border), win (green), lose (55% opacity), disabled when closed.
 - **Bet slip / liquidity slip** (`.slip`, `.seedslip`): amount chips (`.chips button.on`), a number input with an
-  `aria-label`, and one primary action.
+  `aria-label`, and one primary action. Both share a per-market submit guard. While pending, submit has
+  `disabled` and `aria-busy="true"`, with `Pari en cours…` / `Placing bet…` or `Ajout en cours…` /
+  `Adding liquidity…`. Amount, outcome and slip-switch controls are disabled; amount controls and primary
+  buttons use 0.4 opacity. Success closes the slip; rejection keeps it editable for retry. The guard resets in
+  `finally`.
 - **Buttons**: `.primary` (filled light, gold on hover; `.blue` variant for liquidity), `.ghost` (outlined),
   `.link` (underlined text action). One primary per group.
 - **Cards** (`.card`): join form, player card (balance in `DotText`, claim, copy key, my bets), leaderboard,

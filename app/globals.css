@@ -124,14 +124,14 @@ aside { display: flex; flex-direction: column; gap: 14px; position: sticky; top:
 .slip { display: flex; flex-direction: column; gap: 8px; background: #0d0d10; border: 1px dashed var(--gold-lo); border-radius: 4px; padding: 10px; }
 .seedslip { border-color: var(--blue-lo); }
 .seedslip p { margin: 0; color: var(--muted); }
-.chips { display: flex; gap: 6px; }
+.chips { display: flex; flex-wrap: wrap; gap: 6px; }
 .chips button { background: var(--panel-2); border: 1px solid var(--line); border-radius: 4px; padding: 6px 10px; }
 .chips button.on { border-color: var(--gold); color: var(--gold-hi); }
-.chips input { width: 90px; flex: 1; }
+.chips input { flex: 1 1 90px; min-width: 90px; }
 .primary { background: var(--text); color: #17171b; border: 1px solid var(--text); border-radius: 4px; padding: 9px 12px; font-weight: 600; }
 .primary:hover:not(:disabled) { background: var(--gold); border-color: var(--gold); }
 .primary.blue:hover { background: var(--blue); border-color: var(--blue); color: var(--text); }
-.primary:disabled { opacity: 0.4; }
+.primary:disabled, .chips :disabled { opacity: 0.4; }
 .ghost { background: none; border: 1px solid var(--line); border-radius: 4px; padding: 9px 12px; color: var(--text); }
 .link { background: none; border: 0; padding: 0; color: var(--blue); font-size: 11px; text-decoration: underline; text-underline-offset: 3px; }
 .row { display: flex; gap: 8px; flex-wrap: wrap; }
